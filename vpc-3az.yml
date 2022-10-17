@@ -1,0 +1,1764 @@
+#################
+# Author:      Des Jones (des@bitboffins.io)
+# Project:     DC automation
+# Date:        Thu 13 Oct 16:35:45 BST 2022
+# Version:     1.01
+# Git:         https://github.com/desmatic/cfn
+###################################################
+
+AWSTemplateFormatVersion: 2010-09-09
+Description: VPC dc-aws-1.01
+
+Parameters:
+  CreatedBy:
+    Default: desjones
+    Description: Resource name for tagging resources
+    Type: String
+    MinLength: '1'
+    MaxLength: '64'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9-]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  OwnerName:
+    Default: infraops
+    Description: Resource owners name for tagging resources
+    Type: String
+    MinLength: '1'
+    MaxLength: '64'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9-]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  DataCenter:
+    Default: dc1
+    Description: Datacenter name for tagging resources
+    Type: String
+    MinLength: '1'
+    MaxLength: '64'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9-]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  S3RepoHostname:
+    Description: DNS hostname for s3 bucket that holds http accessible rpms and public files
+    Type: String
+    Default: 's3repo'
+  S3RepoPipelineAccess:
+    Description: Comma separated list of principal arn roles to allow s3repo access
+    Type: String
+    Default: arn:aws:iam::381488693297:role/pw-s3repo
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+  S3RepoPublicIPAccess:
+    Description: Comma separated list of IP addresses to allow s3repo access
+    Type: String
+    Default: none
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+  S3RepoVPCAccess:
+    Description: Comma separated list of VPCs (same region) to allow s3repo access
+    Type: String
+    Default: none
+    ConstraintDescription: VPCs must be in the same region
+  JumpboxSSHLocation:
+    Description: External IP address range that can be used to SSH to EC2 instances
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 10.0.0.0/8
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+  CustomerGatewayId:
+    Default: none
+    Description: Existing customer gateway ID or none
+    Type: String
+    ConstraintDescription: existing customer gateway ID or none
+  VPNEndpointIP:
+    Description: The IP address of the VPN Endpoint or directconnect
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    AllowedValues:
+      - 10.131.131.131
+      - directconnect
+    Default: directconnect
+    ConstraintDescription: must be a valid IP range of the form x.x.x.x or directconnect
+  OutboundIP1:
+    Description: Forwarding IP address for DNS lookups or noresolvers
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    AllowedValues:
+      - 10.131.131.132
+      - noresolvers
+    Default: noresolvers
+    ConstraintDescription: must be a valid IP range of the form x.x.x.x
+  OutboundIP2:
+    Description: Backup forwarding IP address for DNS lookups or noresolvers
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    AllowedValues:
+      - 10.131.131.133
+      - noresolvers
+    Default: noresolvers
+    ConstraintDescription: must be a valid IP range of the form x.x.x.x
+  VPNCIDR:
+    Description: The destination for VPN traffic
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    AllowedValues:
+      - 10.131.0.0/16
+    Default: 10.131.0.0/16
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+  VPCCIDR:
+    Description: The IP address range for the VPC
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 10.93.0.0/16
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+  PublicSubnetAZ1CIDR:
+    Description: 'The IP address range for the VPC'
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 10.93.0.0/19
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+  PublicSubnetAZ1DNSInbound:
+    Description: The IP address range for the inbound DNS Service
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 10.93.0.6
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})'
+    ConstraintDescription: must be a valid IP address
+  PublicSubnetAZ1DNSOutbound:
+    Description: The IP address range for the outbound DNS Service
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 10.93.0.5
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})'
+    ConstraintDescription: must be a valid IP address
+  PublicSubnetAZ2CIDR:
+    Description: The IP address range for the VPC
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 10.93.32.0/19
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+  PublicSubnetAZ2DNSInbound:
+    Description: The IP address range for the inbound DNS Service
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 10.93.32.6
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})'
+    ConstraintDescription: must be a valid IP address
+  PublicSubnetAZ2DNSOutbound:
+    Description: The IP address range for the outbound DNS Service
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 10.93.32.5
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})'
+    ConstraintDescription: must be a valid IP address
+  PublicSubnetAZ3CIDR:
+    Description: The IP address range for the VPC
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 10.93.64.0/19
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+  PublicSubnetAZ3DNSInbound:
+    Description: The IP address range for the inbound DNS Service
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 10.93.64.6
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})'
+    ConstraintDescription: must be a valid IP address
+  PublicSubnetAZ3DNSOutbound:
+    Description: The IP address range for the outbound DNS Service
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 10.93.64.5
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})'
+    ConstraintDescription: must be a valid IP address
+  PrivateSubnet1AZ1CIDR:
+    Description: The IP address range for the VPC
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 10.93.128.0/19
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+  PrivateSubnet1AZ2CIDR:
+    Description: The IP address range for the VPC
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 10.93.160.0/19
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+  PrivateSubnet1AZ3CIDR:
+    Description: The IP address range for the VPC
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 10.93.192.0/19
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+  HostedZoneName:
+    Description: DNS Hosted Zone Name (unused subdomain of localdomain.net)
+    Type: String
+    Default: dc1.localdomain.net
+  BYOIPPoolID:
+    Description: BYOIP Pool ID
+    Type: String
+    Default: none
+  NatGateways:
+    Description: Create Nat Gateways for private subnets
+    Type: String
+    AllowedValues:
+      - yes
+      - no
+    Default: no
+Conditions:
+  CreateVPN:
+    !Not [!Equals [!Ref VPNEndpointIP, directconnect]]
+  CreateCustomerGateway:
+    !And [!Equals [!Ref CustomerGatewayId, none], Condition: CreateVPN]
+  CreateResolvers:
+    !Not [!Equals [!Ref OutboundIP1, noresolvers]]
+  CreateResolversBackup:
+    !Not [!Equals [!Ref OutboundIP2, noresolvers]]
+  AddS3RepoVPCAccess:
+    !Not [!Equals [!Ref S3RepoVPCAccess, none]]
+  AddS3RepoPublicIPAccess:
+    !Or [!Not [!Equals [!Ref S3RepoPublicIPAccess, none]], Condition: CreateVPN]
+  CreateVPNAndPublicIPAccess:
+    !And [!Not [!Equals [!Ref S3RepoPublicIPAccess, none]], Condition: CreateVPN]
+  CreateS3RepoPipelineAccess:
+    !Not [!Equals [!Ref S3RepoPipelineAccess, none]]
+  UseBYOIPPool:
+    !Not [!Equals [!Ref BYOIPPoolID, none]]
+  CreateNatGateways:
+    !Equals [!Ref NatGateways, yes]
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VPCCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: !Join
+          - '-'
+          - - !Ref AWS::StackName
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+  NetworkAclEntryAllowHTTP:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Fn::GetAtt:
+          - VPC
+          - DefaultNetworkAcl
+      RuleNumber: 60
+      Protocol: 6
+      RuleAction: Allow
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 80
+        To: 80
+  NetworkAclEntryAllowHTTPS:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Fn::GetAtt:
+          - VPC
+          - DefaultNetworkAcl
+      RuleNumber: 70
+      Protocol: 6
+      RuleAction: Allow
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 443
+        To: 443
+  NetworkAclEntryAllowSSH:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Fn::GetAtt:
+          - VPC
+          - DefaultNetworkAcl
+      RuleNumber: 87
+      Protocol: 6
+      RuleAction: Allow
+      Egress: false
+      CidrBlock: !Ref JumpboxSSHLocation
+      PortRange:
+        From: 22
+        To: 22
+  NetworkAclEntryAllow192168TCP:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Fn::GetAtt:
+          - VPC
+          - DefaultNetworkAcl
+      RuleNumber: 88
+      Protocol: 6
+      RuleAction: Allow
+      Egress: false
+      CidrBlock: 192.168.0.0/16
+      PortRange:
+        From: 0
+        To: 65535
+  NetworkAclEntryAllow192168UDP:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Fn::GetAtt:
+          - VPC
+          - DefaultNetworkAcl
+      RuleNumber: 89
+      Protocol: 17
+      RuleAction: Allow
+      Egress: false
+      CidrBlock: 192.168.0.0/16
+      PortRange:
+        From: 0
+        To: 65535
+  NetworkAclEntryAllow17216TCP:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Fn::GetAtt:
+          - VPC
+          - DefaultNetworkAcl
+      RuleNumber: 90
+      Protocol: 6
+      RuleAction: Allow
+      Egress: false
+      CidrBlock: 172.16.0.0/12
+      PortRange:
+        From: 0
+        To: 65535
+  NetworkAclEntryAllow17216UDP:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Fn::GetAtt:
+          - VPC
+          - DefaultNetworkAcl
+      RuleNumber: 91
+      Protocol: 17
+      RuleAction: Allow
+      Egress: false
+      CidrBlock: 172.16.0.0/12
+      PortRange:
+        From: 0
+        To: 65535
+  NetworkAclEntryAllow10TCP:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Fn::GetAtt:
+          - VPC
+          - DefaultNetworkAcl
+      RuleNumber: 92
+      Protocol: 6
+      RuleAction: Allow
+      Egress: false
+      CidrBlock: 10.0.0.0/8
+      PortRange:
+        From: 0
+        To: 65535
+  NetworkAclEntryAllow10UDP:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Fn::GetAtt:
+          - VPC
+          - DefaultNetworkAcl
+      RuleNumber: 93
+      Protocol: 17
+      RuleAction: Allow
+      Egress: false
+      CidrBlock: 10.0.0.0/8
+      PortRange:
+        From: 0
+        To: 65535
+  NetworkAclEntryAllowDNSTCP:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Fn::GetAtt:
+          - VPC
+          - DefaultNetworkAcl
+      RuleNumber: 94
+      Protocol: 6
+      RuleAction: Allow
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 53
+        To: 53
+  NetworkAclEntryAllowDNSUDP:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Fn::GetAtt:
+          - VPC
+          - DefaultNetworkAcl
+      RuleNumber: 95
+      Protocol: 17
+      RuleAction: Allow
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 53
+        To: 53
+  NetworkAclEntryAllowEphemeralTCP:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Fn::GetAtt:
+          - VPC
+          - DefaultNetworkAcl
+      RuleNumber: 96
+      Protocol: 6
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 1024
+        To: 65535
+  NetworkAclEntryAllowEphemeralUDP:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Fn::GetAtt:
+          - VPC
+          - DefaultNetworkAcl
+      RuleNumber: 97
+      Protocol: 17
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: 1024
+        To: 65535
+  NetworkAclEntryAllowPing:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Fn::GetAtt:
+          - VPC
+          - DefaultNetworkAcl
+      RuleNumber: 98
+      Protocol: 1
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+      Icmp:
+        Code: -1
+        Type: -1
+  NetworkAclEntryDenyAll:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Fn::GetAtt:
+          - VPC
+          - DefaultNetworkAcl
+      RuleNumber: 99
+      Protocol: -1
+      RuleAction: deny
+      Egress: false
+      CidrBlock: 0.0.0.0/0
+  DHCPOptions:
+    Type: AWS::EC2::DHCPOptions
+    Properties:
+      DomainName: !Ref HostedZoneName
+      DomainNameServers:
+        - AmazonProvidedDNS
+      Tags:
+        - Key: Name
+          Value: !Join
+          - '-'
+          - - !Ref AWS::StackName
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+  VPCDHCPOptionsAssociation:
+    Type: AWS::EC2::VPCDHCPOptionsAssociation
+    Properties:
+      VpcId: !Ref VPC
+      DhcpOptionsId: !Ref DHCPOptions
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Join
+          - '-'
+          - - !Ref AWS::StackName
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+    DependsOn: InternetGateway
+  VPNGateway:
+    Type: AWS::EC2::VPNGateway
+    Condition: CreateVPN
+    Properties:
+      Type: ipsec.1
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - VPNGateway
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+  AttachVpnGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Condition: CreateVPN
+    Properties:
+      VpcId: !Ref VPC
+      VpnGatewayId:
+        Ref: VPNGateway
+    DependsOn: VPNGateway
+  CustomerGateway:
+    Type: AWS::EC2::CustomerGateway
+    Condition: CreateCustomerGateway
+    Properties:
+      Type: ipsec.1
+      BgpAsn: 65000
+      IpAddress: !Ref VPNEndpointIP
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - CustomerGateway
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+  VPNConnection:
+    Type: AWS::EC2::VPNConnection
+    Condition: CreateVPN
+    Properties:
+      Type: ipsec.1
+      StaticRoutesOnly: true
+      CustomerGatewayId:
+        !If [CreateCustomerGateway, !Ref CustomerGateway, !Ref CustomerGatewayId]
+      VpnGatewayId:
+        !Ref VPNGateway
+    DependsOn:
+      - VPNGateway
+      - AttachVpnGateway
+  VPNConnectionRoute:
+    Type: AWS::EC2::VPNConnectionRoute
+    Condition: CreateVPN
+    Properties:
+      DestinationCidrBlock: !Ref VPNCIDR
+      VpnConnectionId: !Ref VPNConnection
+    DependsOn: VPNConnection
+  PublicRouteTableAZ1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - PublicRouteTableAZ1
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+  DefaultRouteAZ1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTableAZ1
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+    DependsOn:
+      - PublicRouteTableAZ1
+      - InternetGatewayAttachment
+  VPNGatewayRoutePropAZ1:
+    Type: AWS::EC2::VPNGatewayRoutePropagation
+    Condition: CreateVPN
+    Properties:
+      RouteTableIds:
+        - !Ref PublicRouteTableAZ1
+      VpnGatewayId: !Ref VPNGateway
+    DependsOn:
+      - PublicRouteTableAZ1
+      - VPNGateway
+      - AttachVpnGateway
+  PublicSubnetAZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref PublicSubnetAZ1CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - PublicSubnetAZ1
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+  PublicSubnetAZ1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTableAZ1
+      SubnetId: !Ref PublicSubnetAZ1
+  PrivateSubnet1AZ1RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - PrivateSubnet1AZ1
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+  PrivateSubnet1AZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref PrivateSubnet1AZ1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - PrivateSubnet1AZ1
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+  PrivateSubnet1AZ1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateSubnet1AZ1RouteTable
+      SubnetId: !Ref PrivateSubnet1AZ1
+  PrivateSubnet1AZ1EIP:
+    Type: AWS::EC2::EIP
+    Condition: CreateNatGateways
+    Properties:
+      Domain: vpc
+      PublicIpv4Pool: !If [UseBYOIPPool, !Ref BYOIPPoolID, !Ref "AWS::NoValue"]
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - PrivateSubnet1AZ1
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+    DependsOn: InternetGatewayAttachment
+  PrivateSubnet1AZ1NATGateway:
+    Type: AWS::EC2::NatGateway
+    Condition: CreateNatGateways
+    Properties:
+      AllocationId:
+        Fn::GetAtt:
+        - PrivateSubnet1AZ1EIP
+        - AllocationId
+      SubnetId: !Ref PublicSubnetAZ1
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - VPNGatewayAZ1
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+    DependsOn: InternetGatewayAttachment
+  PrivateSubnet1AZ1DefaultRoute:
+    Type: AWS::EC2::Route
+    Condition: CreateNatGateways
+    Properties:
+      RouteTableId: !Ref PrivateSubnet1AZ1RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref PrivateSubnet1AZ1NATGateway
+    DependsOn:
+      - PrivateSubnet1AZ1RouteTable
+  VPNGatewayRoutePropPrivateSubnet1AZ1:
+    Type: AWS::EC2::VPNGatewayRoutePropagation
+    Condition: CreateVPN
+    Properties:
+      RouteTableIds:
+        - !Ref PrivateSubnet1AZ1RouteTable
+      VpnGatewayId: !Ref VPNGateway
+    DependsOn:
+      - PrivateSubnet1AZ1RouteTable
+      - VPNGateway
+      - AttachVpnGateway
+  PublicRouteTableAZ2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - PublicRouteTableAZ2
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+  DefaultRouteAZ2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTableAZ2
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+    DependsOn:
+      - PublicRouteTableAZ2
+      - InternetGatewayAttachment
+  VPNGatewayRoutePropAZ2:
+    Type: AWS::EC2::VPNGatewayRoutePropagation
+    Condition: CreateVPN
+    Properties:
+      RouteTableIds:
+        - !Ref PublicRouteTableAZ2
+      VpnGatewayId: !Ref VPNGateway
+    DependsOn:
+      - PublicRouteTableAZ2
+      - VPNGateway
+      - AttachVpnGateway
+  PublicSubnetAZ2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: !Ref PublicSubnetAZ2CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - PublicSubnetAZ2
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+  PublicSubnetAZ2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTableAZ2
+      SubnetId: !Ref PublicSubnetAZ2
+  PrivateSubnet1AZ2RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - PrivateSubnet1AZ2
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+  PrivateSubnet1AZ2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: !Ref PrivateSubnet1AZ2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - PrivateSubnet1AZ2
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+  PrivateSubnet1AZ2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateSubnet1AZ2RouteTable
+      SubnetId: !Ref PrivateSubnet1AZ2
+  PrivateSubnet1AZ2EIP:
+    Type: AWS::EC2::EIP
+    Condition: CreateNatGateways
+    Properties:
+      Domain: vpc
+      PublicIpv4Pool: !If [UseBYOIPPool, !Ref BYOIPPoolID, !Ref "AWS::NoValue"]
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - PrivateSubnet1AZ2
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+    DependsOn: InternetGatewayAttachment
+  PrivateSubnet1AZ2NATGateway:
+    Type: AWS::EC2::NatGateway
+    Condition: CreateNatGateways
+    Properties:
+      AllocationId:
+        Fn::GetAtt:
+        - PrivateSubnet1AZ2EIP
+        - AllocationId
+      SubnetId: !Ref PublicSubnetAZ2
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - VPNGatewayAZ2
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+    DependsOn: InternetGatewayAttachment
+  PrivateSubnet1AZ2DefaultRoute:
+    Type: AWS::EC2::Route
+    Condition: CreateNatGateways
+    Properties:
+      RouteTableId: !Ref PrivateSubnet1AZ2RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref PrivateSubnet1AZ2NATGateway
+    DependsOn:
+      - PrivateSubnet1AZ2RouteTable
+  VPNGatewayRoutePropPrivateSubnet1AZ2:
+    Type: AWS::EC2::VPNGatewayRoutePropagation
+    Condition: CreateVPN
+    Properties:
+      RouteTableIds:
+        - !Ref PrivateSubnet1AZ2RouteTable
+      VpnGatewayId: !Ref VPNGateway
+    DependsOn:
+      - PrivateSubnet1AZ2RouteTable
+      - VPNGateway
+      - AttachVpnGateway
+  PublicRouteTableAZ3:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - PublicRouteTableAZ3
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+  DefaultRouteAZ3:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTableAZ3
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+    DependsOn:
+      - PublicRouteTableAZ3
+      - InternetGatewayAttachment
+  VPNGatewayRoutePropAZ3:
+    Type: AWS::EC2::VPNGatewayRoutePropagation
+    Condition: CreateVPN
+    Properties:
+      RouteTableIds:
+        - !Ref PublicRouteTableAZ3
+      VpnGatewayId: !Ref VPNGateway
+    DependsOn:
+      - PublicRouteTableAZ3
+      - VPNGateway
+      - AttachVpnGateway
+  PublicSubnetAZ3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]
+      CidrBlock: !Ref PublicSubnetAZ3CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - PublicSubnetAZ3
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+  PublicSubnetAZ3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTableAZ3
+      SubnetId: !Ref PublicSubnetAZ3
+  PrivateSubnet1AZ3RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - PrivateSubnet1AZ3
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+  PrivateSubnet1AZ3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]
+      CidrBlock: !Ref PrivateSubnet1AZ3CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - PrivateSubnet1AZ3
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+  PrivateSubnet1AZ3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateSubnet1AZ3RouteTable
+      SubnetId: !Ref PrivateSubnet1AZ3
+  PrivateSubnet1AZ3EIP:
+    Type: AWS::EC2::EIP
+    Condition: CreateNatGateways
+    Properties:
+      Domain: vpc
+      PublicIpv4Pool: !If [UseBYOIPPool, !Ref BYOIPPoolID, !Ref "AWS::NoValue"]
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - PrivateSubnet1AZ3
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+    DependsOn: InternetGatewayAttachment
+  PrivateSubnet1AZ3NATGateway:
+    Type: AWS::EC2::NatGateway
+    Condition: CreateNatGateways
+    Properties:
+      AllocationId:
+        Fn::GetAtt:
+        - PrivateSubnet1AZ3EIP
+        - AllocationId
+      SubnetId: !Ref PublicSubnetAZ3
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - VPNGatewayAZ3
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+    DependsOn: InternetGatewayAttachment
+  PrivateSubnet1AZ3DefaultRoute:
+    Type: AWS::EC2::Route
+    Condition: CreateNatGateways
+    Properties:
+      RouteTableId: !Ref PrivateSubnet1AZ3RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref PrivateSubnet1AZ3NATGateway
+    DependsOn:
+      - PrivateSubnet1AZ3RouteTable
+  VPNGatewayRoutePropPrivateSubnet1AZ3:
+    Type: AWS::EC2::VPNGatewayRoutePropagation
+    Condition: CreateVPN
+    Properties:
+      RouteTableIds:
+        - !Ref PrivateSubnet1AZ3RouteTable
+      VpnGatewayId: !Ref VPNGateway
+    DependsOn:
+      - PrivateSubnet1AZ3RouteTable
+      - VPNGateway
+      - AttachVpnGateway
+  DNSSecurityGroup:
+    Description: The default Amazon EC2 security group that will be created for the Amazon EC2 Linux instances.
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Jumpbox security group
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 53
+        ToPort: 53
+        CidrIp: 10.0.0.0/8
+      - IpProtocol: udp
+        FromPort: 53
+        ToPort: 53
+        CidrIp: 10.0.0.0/8
+      - IpProtocol: tcp
+        FromPort: 53
+        ToPort: 53
+        CidrIp: 172.16.0.0/12
+      - IpProtocol: udp
+        FromPort: 53
+        ToPort: 53
+        CidrIp: 172.16.0.0/12
+      - IpProtocol: tcp
+        FromPort: 53
+        ToPort: 53
+        CidrIp: 192.168.0.0/16
+      - IpProtocol: udp
+        FromPort: 53
+        ToPort: 53
+        CidrIp: 192.168.0.0/16
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+  DNSSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: -1
+      FromPort: 0
+      ToPort: 65535
+      SourceSecurityGroupId:
+        Fn::GetAtt:
+        - DNSSecurityGroup
+        - GroupId
+      GroupId:
+        Fn::GetAtt:
+        - DNSSecurityGroup
+        - GroupId
+  DNS:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      HostedZoneConfig:
+        Comment: !Sub '${AWS::StackName} - ${AWS::StackId}'
+      Name: !Ref HostedZoneName
+      VPCs:
+        - VPCId: !Ref VPC
+          VPCRegion: !Ref AWS::Region
+      HostedZoneTags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+        - Key: service-type
+          Value: dns
+  DNSInboundResolverEndpoint:
+    Type: "AWS::Route53Resolver::ResolverEndpoint"
+    Condition: CreateResolvers
+    Properties:
+      Direction: INBOUND
+      IpAddresses:
+        - SubnetId: !Ref PublicSubnetAZ1
+          Ip: !Ref PublicSubnetAZ1DNSInbound
+        - SubnetId: !Ref PublicSubnetAZ2
+          Ip: !Ref PublicSubnetAZ2DNSInbound
+        - SubnetId: !Ref PublicSubnetAZ3
+          Ip: !Ref PublicSubnetAZ3DNSInbound
+      SecurityGroupIds:
+        - !Ref DNSSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - Outbound
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+        - Key: service-type
+          Value: dns
+  DNSOutboundResolverEndpoint:
+    Type: "AWS::Route53Resolver::ResolverEndpoint"
+    Condition: CreateResolvers
+    Properties:
+      Direction: OUTBOUND
+      IpAddresses:
+        - SubnetId: !Ref PublicSubnetAZ1
+          Ip: !Ref PublicSubnetAZ1DNSOutbound
+        - SubnetId: !Ref PublicSubnetAZ2
+          Ip: !Ref PublicSubnetAZ2DNSOutbound
+        - SubnetId: !Ref PublicSubnetAZ3
+          Ip: !Ref PublicSubnetAZ3DNSOutbound
+      SecurityGroupIds:
+        - !Ref DNSSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - Outbound
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+        - Key: service-type
+          Value: dns
+  ResolverRule:
+    Type: "AWS::Route53Resolver::ResolverRule"
+    Condition: CreateResolvers
+    Properties:
+      DomainName: localdomain.net
+      Name: localdomain
+      ResolverEndpointId: !Ref DNSOutboundResolverEndpoint
+      RuleType: FORWARD
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - localdomain
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+        - Key: service-type
+          Value: dns
+      TargetIps:
+        - Ip: !Ref OutboundIP1
+          Port: "53"
+        - !If
+          - CreateResolversBackup
+          - Ip: !Ref OutboundIP2
+            Port: "53"
+          - !Ref AWS::NoValue
+  ResolverRuleAssociation:
+    Type: "AWS::Route53Resolver::ResolverRuleAssociation"
+    Condition: CreateResolvers
+    Properties:
+      Name: infoblox
+      ResolverRuleId: !Ref ResolverRule
+      VPCId: !Ref VPC
+  S3VPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal: "*"
+          Action:
+            - "*"
+          Resource:
+            - "*"
+      RouteTableIds:
+        - !Ref PublicRouteTableAZ1
+        - !Ref PublicRouteTableAZ2
+        - !Ref PublicRouteTableAZ3
+        - !Ref PrivateSubnet1AZ1RouteTable
+        - !Ref PrivateSubnet1AZ2RouteTable
+        - !Ref PrivateSubnet1AZ3RouteTable
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcId: !Ref VPC
+  DynamoDBVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal: "*"
+          Action:
+            - "*"
+          Resource:
+            - "*"
+      RouteTableIds:
+        - !Ref PublicRouteTableAZ1
+        - !Ref PublicRouteTableAZ2
+        - !Ref PublicRouteTableAZ3
+        - !Ref PrivateSubnet1AZ1RouteTable
+        - !Ref PrivateSubnet1AZ2RouteTable
+        - !Ref PrivateSubnet1AZ3RouteTable
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.dynamodb
+      VpcId: !Ref VPC
+  S3RepoBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: PublicRead
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      BucketName: !Sub '${S3RepoHostname}.${HostedZoneName}'
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - rpm
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+        - Key: service-type
+          Value: s3repo
+  S3RepoBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      PolicyDocument:
+        Id: MyPolicy
+        Version: 2012-10-17
+        Statement:
+          - Sid: PrivateReadForGetBucketObjects
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource:
+              - !Join
+                - ''
+                - - 'arn:aws:s3:::'
+                  - !Ref S3RepoBucket
+              - !Join
+                - ''
+                - - 'arn:aws:s3:::'
+                  - !Ref S3RepoBucket
+                  - /*
+            Condition:
+              StringEquals:
+                aws:sourceVpc: !If [AddS3RepoVPCAccess, !Split [ ",", !Join [ ",", [ !Ref VPC, !Ref S3RepoVPCAccess] ] ], !Ref VPC ]
+          - !If
+            - AddS3RepoPublicIPAccess
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource:
+                - !Join
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - !Ref S3RepoBucket
+                - !Join
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - !Ref S3RepoBucket
+                    - /*
+              Condition:
+                IpAddress:
+                  aws:SourceIp: !If [CreateVPN, !If [CreateVPNAndPublicIPAccess, !Split [ ",", !Join [ ",", [ !Ref VPNEndpointIP, !Ref S3RepoPublicIPAccess] ] ], !Ref VPNEndpointIP], !Split [ ",", !Ref S3RepoPublicIPAccess] ]
+            - !Ref AWS::NoValue
+          - !If
+            - AddS3RepoPublicIPAccess
+            - Sid: PublicDenyAll
+              Effect: Deny
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource:
+                - !Join
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - !Ref S3RepoBucket
+                    - /*
+              Condition:
+                StringNotEqualsIfExists:
+                  aws:sourceVpc: !If [AddS3RepoVPCAccess, !Split [ ",", !Join [ ",", [ !Ref VPC, !Ref S3RepoVPCAccess] ] ], !Ref VPC ]
+                NotIpAddressIfExists:
+                  aws:SourceIp: !If [CreateVPN, !If [CreateVPNAndPublicIPAccess, !Split [ ",", !Join [ ",", [ !Ref VPNEndpointIP, !Ref S3RepoPublicIPAccess] ] ], !Ref VPNEndpointIP], !Split [ ",", !Ref S3RepoPublicIPAccess] ]
+            - Sid: PublicDenyAll
+              Effect: Deny
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource:
+                - !Join
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - !Ref S3RepoBucket
+                    - /*
+              Condition:
+                StringNotEqualsIfExists:
+                  aws:sourceVpc: !If [AddS3RepoVPCAccess, !Split [ ",", !Join [ ",", [ !Ref VPC, !Ref S3RepoVPCAccess] ] ], !Ref VPC ]
+          - !If
+            - CreateS3RepoPipelineAccess
+            - Sid: PrivateReadWriteForRepoPipeline
+              Effect: Allow
+              Principal:
+                AWS: !Split
+                - ','
+                - !Ref S3RepoPipelineAccess
+              Action: 's3:*'
+              Resource:
+                - !Join
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - !Ref S3RepoBucket
+                - !Join
+                  - ''
+                  - - 'arn:aws:s3:::'
+                    - !Ref S3RepoBucket
+                    - /*
+            - !Ref AWS::NoValue
+      Bucket: !Ref S3RepoBucket
+  S3RepoDNS:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      HostedZoneId: !Ref DNS
+      RecordSets:
+        - Name: !Sub '${S3RepoHostname}.${HostedZoneName}.'
+          Type: CNAME
+          TTL: 60
+          ResourceRecords:
+          - !Sub '${S3RepoHostname}.${HostedZoneName}.s3.amazonaws.com'
+  DefaultSecurityGroup:
+    Description: Default security group for VPC.
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable service ports
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - sg
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+      VpcId: !Ref VPC
+  DMZSecurityGroup:
+    Description: Default DMZ security group for VPC.
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable service ports for world access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - dmz
+              - sg
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+      VpcId: !Ref VPC
+  BastionSecurityGroup:
+    Description: Default security group for VPC.
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable bastion access
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - bastion
+              - sg
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+      VpcId: !Ref VPC
+  DSASecurityGroup:
+    Description: Default security group for Datastores and Access.
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable bastion access
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - !Ref AWS::StackName
+              - bastion
+              - sg
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+      VpcId: !Ref VPC
+  DefaultInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+            - ssm.amazonaws.com
+          Action:
+          - sts:AssumeRole
+  DefaultInstancePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+        - Effect: Allow
+          Action:
+          - s3:List*
+          - ec2:Describe*
+          - ec2:CreateTags*
+          - ec2:CreateSnapshot
+          - ec2:ModifyVolume
+          - autoscaling:Describe*
+          - autoscaling:EnterStandby
+          - autoscaling:ExitStandby
+          - autoscaling:SetInstanceProtection
+          - autoscaling:SuspendProcesses
+          - sns:Publish
+          Resource:
+          - "*"
+        - Effect: Allow
+          Action:
+          - iam:PassRole
+          Resource: "*"
+      Roles:
+      - Ref: DefaultInstanceRole
+      PolicyName: !Ref AWS::StackName
+    DependsOn: DefaultInstanceRole
+  DefaultInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+      - Ref: DefaultInstanceRole
+    DependsOn: DefaultInstanceRole
+
+Outputs:
+  DefaultSecurityGroup:
+    Description: EC2 instances security group
+    Value: !Ref DefaultSecurityGroup
+  VpcId:
+    Description: VPC ID
+    Value: !Ref VPC
