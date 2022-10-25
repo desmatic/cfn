@@ -1,5 +1,5 @@
 #################
-# Author:      Des Jones (des@bitboffins.io)
+# Author:      Des Jones
 # Project:     DC automation
 # Date:        Fri 14 Oct 10:19:09 BST 2022
 # Version:     1.01
@@ -38,14 +38,6 @@ Parameters:
     MaxLength: '64'
     AllowedPattern: '[a-zA-Z][a-zA-Z0-9-]*'
     ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
-  OracleSID:
-    Default: ORACLEDB
-    Description: Oracle Service Identifier (SID) - a short name to uniquely identify the database instance.
-    Type: String
-    MinLength: '1'
-    MaxLength: '8'
-    AllowedPattern: '[A-Z][A-Z0-9]*'
-    ConstraintDescription: Upper case alphanumeric characters.
   KeyPairName:
     Type: 'AWS::EC2::KeyPair::KeyName'
     Description: The name of an existing Amazon EC2 key pair in the region where the project is created, which you can use to SSH into the new Amazon EC2 Linux instances.
@@ -83,13 +75,13 @@ Parameters:
     Description: The initial number of EC2Server instances
     Type: Number
     MinValue: '0'
-    MaxValue: '3'
+    MaxValue: '8'
     ConstraintDescription: must be between 1 and 5 EC2 instances.
-  DataDiskSize:
-    Default: '24'
+  DiskSize:
+    Default: '16'
     Description: Disk volume in gigabytes
     Type: Number
-    MinValue: '24'
+    MinValue: '16'
     MaxValue: '3335'
     ConstraintDescription: must be between 12 and 3335.
   AllowPublicSSH:
@@ -234,10 +226,10 @@ Resources:
         KeyName: !Ref KeyPairName
         ImageId: !Ref LatestAmiId
         EbsOptimized: true
-        # InstanceMarketOptions:
-        #   MarketType: spot
-        #   SpotOptions:
-        #     SpotInstanceType: one-time
+        InstanceMarketOptions:
+          MarketType: spot
+          SpotOptions:
+            SpotInstanceType: one-time
         IamInstanceProfile:
           Arn:
             Fn::GetAtt:
@@ -250,12 +242,12 @@ Resources:
         BlockDeviceMappings:
           - DeviceName: "/dev/sda1"
             Ebs:
-              VolumeSize: 16
+              VolumeSize: !Ref DiskSize
               VolumeType: gp3
               Encrypted: true
           - DeviceName: "/dev/xvdb"
             Ebs:
-              VolumeSize: !Ref DataDiskSize
+              VolumeSize: !Ref DiskSize
               VolumeType: gp3
               Encrypted: true
         TagSpecifications:
@@ -321,10 +313,6 @@ Resources:
               - !Ref 'HostedZoneID'
               - |+
 
-              - ORACLE_SID=
-              - !Ref 'OracleSID'
-              - |+
-
               - |
                 # Restart ssh on port 2222
                 yum install -y policycoreutils-python-utils
@@ -335,7 +323,7 @@ Resources:
               - |
                 # Register DNS name
                 yum install -y python3-pip
-                pip3 install awscli 
+                pip3 install awscli --upgrade
                 ln -s /usr/local/bin/aws /usr/bin/aws
                 IPADDR=`ip route get 8.8.8.8 | awk '{ for (nn=1;nn<=NF;nn++) if ($nn~"src") print $(nn+1) }'`
                 FQDN_HOSTNAME=`hostname --fqdn`
@@ -349,53 +337,9 @@ Resources:
                 mount /opt/oracle/oradata/
 
               - |
-                # Install oracle 19c
-                # https://www.server-world.info/en/note?os=CentOS_8&p=oracle19c&f=6
-                yum install -y https://s3.us-east-2.amazonaws.com/s3repo.dc1.localdomain.net/oracle/19c/oracle-database-preinstall-19c-1.0-2.el8.x86_64.rpm
-                chown -R oracle:oinstall /opt/oracle
-                yum install -y https://s3.us-east-2.amazonaws.com/s3repo.dc1.localdomain.net/oracle/19c/oracle-database-ee-19c-1.0-1.x86_64.rpm
-                cat << 'EOF' >> /home/oracle/.bash_profile
-                export ORACLE_BASE=/opt/oracle/oradata
-                export ORACLE_HOME=/opt/oracle/product/19c/dbhome_1
-                export PATH=$PATH:$ORACLE_HOME/bin
-                EOF
+                # Install db2
 
-              - |
-                # Setup SSH for Oracle user
-                cp -a /home/ec2-user/.ssh /home/oracle
-                chown -R oracle: /home/oracle/.ssh
-
-              - |
-                # Create Oracle SID database scripts
-                cp -f /etc/sysconfig/oracledb_ORCLCDB-19c.conf /etc/sysconfig/oracledb_${ORACLE_SID}-19c.conf
-                cp -f /etc/init.d/oracledb_ORCLCDB-19c /etc/init.d/oracledb_${ORACLE_SID}-19c
-                sed -i "s@export ORACLE_SID=ORCLCDB@export ORACLE_SID=${ORACLE_SID}@" /etc/init.d/oracledb_${ORACLE_SID}-19c
-                # Enable archive logs for GoldenGate
-                sed -i 's@-emExpressPort $EM_EXPRESS_PORT@-emExpressPort $EM_EXPRESS_PORT -recoveryAreaDestination ${ORACLE_DATA_LOCATION}/fast_recovery_area/{DB_UNIQUE_NAME} -enableArchive true@' /etc/init.d/oracledb_${ORACLE_SID}-19c
-                # Create the database
-                /etc/init.d/oracledb_${ORACLE_SID}-19c configure
-                sed -i "s@${ORACLE_SID}:/opt/oracle/product/19c/dbhome_1:N@${ORACLE_SID}:/opt/oracle/product/19c/dbhome_1:Y@" /etc/oratab
-                ln -s ../init.d/oracledb_${ORACLE_SID}-19c /etc/rc3.d/99-oracledb
-                # Update oracle user profile with SID
-                cat << EOF >> /home/oracle/.bash_profile
-                export ORACLE_SID=$ORACLE_SID
-                EOF
-
-              - |
-                # Install rlwrap
-                dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm
-                yum install -y rlwrap
-                cat << 'EOF' >> /home/oracle/.bashrc
-                alias sqlplus='rlwrap sqlplus'
-                alias rman='rlwrap rman'
-                EOF
-
-              - |
-                # Install goldengate
-                curl -o gg19.1-oracle-linux64.zip https://s3.us-east-2.amazonaws.com/s3repo.dc1.localdomain.net/goldengate/gg19.1-oracle-linux64.zip
-
-              - |
-                # Free up disk space
+                # free up disk space
                 yum clean all
     DependsOn:
       - InstanceProfile
