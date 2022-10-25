@@ -226,10 +226,10 @@ Resources:
         KeyName: !Ref KeyPairName
         ImageId: !Ref LatestAmiId
         EbsOptimized: true
-        InstanceMarketOptions:
-          MarketType: spot
-          SpotOptions:
-            SpotInstanceType: one-time
+        # InstanceMarketOptions:
+        #   MarketType: spot
+        #   SpotOptions:
+        #     SpotInstanceType: one-time
         IamInstanceProfile:
           Arn:
             Fn::GetAtt:
@@ -323,7 +323,7 @@ Resources:
               - |
                 # Register DNS name
                 yum install -y python3-pip
-                pip3 install awscli --upgrade
+                pip3 install awscli 
                 ln -s /usr/local/bin/aws /usr/bin/aws
                 IPADDR=`ip route get 8.8.8.8 | awk '{ for (nn=1;nn<=NF;nn++) if ($nn~"src") print $(nn+1) }'`
                 FQDN_HOSTNAME=`hostname --fqdn`
@@ -342,24 +342,36 @@ Resources:
                 yum install -y https://s3.us-east-2.amazonaws.com/s3repo.dc1.localdomain.net/oracle/19c/oracle-database-preinstall-19c-1.0-2.el8.x86_64.rpm
                 chown -R oracle:oinstall /opt/oracle
                 yum install -y https://s3.us-east-2.amazonaws.com/s3repo.dc1.localdomain.net/oracle/19c/oracle-database-ee-19c-1.0-1.x86_64.rpm
-                /etc/init.d/oracledb_ORCLCDB-19c configure
-                sed -i 's@ORCLCDB:/opt/oracle/product/19c/dbhome_1:N@ORCLCDB:/opt/oracle/product/19c/dbhome_1:Y@' /etc/oratab
                 cat << 'EOF' >> /home/oracle/.bash_profile
-                export ORACLE_SID=ORCLCDB
                 export ORACLE_BASE=/opt/oracle/oradata
                 export ORACLE_HOME=/opt/oracle/product/19c/dbhome_1
                 export PATH=$PATH:$ORACLE_HOME/bin
                 EOF
-                ln -s ../init.d/oracledb_ORCLCDB-19c /etc/rc3.d/99-oracledb
+
               - |
-                # install rlwrap
+                # Create database
+                /etc/init.d/oracledb_ORCLCDB-19c configure
+                sed -i 's@ORCLCDB:/opt/oracle/product/19c/dbhome_1:N@ORCLCDB:/opt/oracle/product/19c/dbhome_1:Y@' /etc/oratab
+                cat << 'EOF' >> /home/oracle/.bash_profile
+                export ORACLE_SID=ORCLCDB
+                EOF
+                ln -s ../init.d/oracledb_ORCLCDB-19c /etc/rc3.d/99-oracledb
+
+              - |
+                # Install goldengate
+                curl -o gg19.1-oracle-linux64.zip https://s3.us-east-2.amazonaws.com/s3repo.dc1.localdomain.net/goldengate/gg19.1-oracle-linux64.zip
+
+              - |
+                # Install rlwrap
                 dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm
                 yum install -y rlwrap
                 cat << 'EOF' >> /home/oracle/.bashrc
                 alias sqlplus='rlwrap sqlplus'
                 alias rman='rlwrap rman'
                 EOF
-                # setup X11
+
+              - |
+                # Setup Oracle home
                 cp -a /home/ec2-user/.ssh /home/oracle
                 chown -R oracle: /home/oracle/.ssh
                 # free up disk space
