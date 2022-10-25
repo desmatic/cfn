@@ -326,7 +326,7 @@ Resources:
               - |+
 
               - |
-                # Restart ssh on port 2222
+                # Restart SSH on port 2222
                 yum install -y policycoreutils-python-utils
                 semanage port -a -t ssh_port_t -p tcp 2222
                 sed -i 's/#Port 22/Port 22\nPort 2222/' /etc/ssh/sshd_config
@@ -342,14 +342,14 @@ Resources:
                 /usr/local/bin/aws route53 change-resource-record-sets --hosted-zone-id ${HOSTED_ZONE_ID} --change-batch "{ \"Comment\": \"ORACLEDB A record\", \"Changes\": [{ \"Action\": \"CREATE\", \"ResourceRecordSet\": { \"Name\": \"${FQDN_HOSTNAME}\", \"Type\": \"A\", \"TTL\": 120, \"ResourceRecords\": [{ \"Value\": \"${IPADDR}\"}] }}] }" || echo "record already exists"
 
               - |
-                # Mount oracle data disk
+                # Mount Oracle data disk
                 mkfs.xfs /dev/nvme1n1
                 mkdir -p /opt/oracle/oradata/
                 echo '/dev/nvme1n1       /opt/oracle/oradata/       xfs     defaults        0       0' >> /etc/fstab
                 mount /opt/oracle/oradata/
 
               - |
-                # Install oracle 19c
+                # Install Oracle 19c using RPMs
                 # https://www.server-world.info/en/note?os=CentOS_8&p=oracle19c&f=6
                 yum install -y https://s3.us-east-2.amazonaws.com/s3repo.dc1.localdomain.net/oracle/19c/oracle-database-preinstall-19c-1.0-2.el8.x86_64.rpm
                 chown -R oracle:oinstall /opt/oracle
@@ -391,7 +391,7 @@ Resources:
                 EOF
 
               - |
-                # Install goldengate
+                # Install GoldenGate
                 curl -o gg19.1-oracle-linux64.zip https://s3.us-east-2.amazonaws.com/s3repo.dc1.localdomain.net/goldengate/gg19.1-oracle-linux64.zip
 
               - |
