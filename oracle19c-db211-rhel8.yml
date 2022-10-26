@@ -358,7 +358,7 @@ Resources:
                 yum install -y https://s3.us-east-2.amazonaws.com/s3repo.dc1.localdomain.net/oracle/19c/oracle-database-preinstall-19c-1.0-2.el8.x86_64.rpm
                 chown -R oracle:oinstall /opt/oracle
                 yum install -y https://s3.us-east-2.amazonaws.com/s3repo.dc1.localdomain.net/oracle/19c/oracle-database-ee-19c-1.0-1.x86_64.rpm
-                echo /opt/oracle/product/19c/dbhome_1/lib > /etc/ld.so.conf.d/oracle.conf
+                echo "/opt/oracle/product/19c/dbhome_1/lib" > /etc/ld.so.conf.d/oracle.conf
                 ldconfig
                 cat << 'EOF' >> /home/oracle/.bash_profile
                 export ORACLE_BASE=/opt/oracle/oradata
@@ -398,7 +398,7 @@ Resources:
 
               - |
                 # Install GoldenGate
-                curl -o /root/gg19.1-oracle-linux64.zip https://s3.us-east-2.amazonaws.com/s3repo.dc1.localdomain.net/goldengate/gg19.1-oracle-linux64.zip
+                curl -o /root/gg19.1-oracle-linux64.zip https://s3.us-east-2.amazonaws.com/s3repo.dc1.localdomain.net/oracle/goldengate/gg19.1-oracle-linux64.zip
                 unzip /root/gg19.1-oracle-linux64.zip -d /home/oracle/gg19.1
                 chown -R oracle: /home/oracle/gg19.1
                 cat > /home/oracle/oggcore.rsp << 'EOF'
@@ -486,8 +486,12 @@ Resources:
                 #-------------------------------------------------------------------------------
                 UNIX_GROUP_NAME=oinstall
                 EOF
+                chown oracle: /home/oracle/oggcore.rsp
                 /bin/su -s /bin/bash oracle -c "/home/oracle/gg19.1/fbo_ggs_Linux_x64_shiphome/Disk1/runInstaller -silent -nowait -ignoreSysPrereqs -responseFile /home/oracle/oggcore.rsp"
-                rm -rf /home/oracle/gg19.1 /home/oracle/oggcore.rsp /root/gg19.1-oracle-linux64.zip
+                #rm -rf /home/oracle/gg19.1 /root/gg19.1-oracle-linux64.zip
+                cat << 'EOF' >> /home/oracle/.bash_profile
+                export PATH=$PATH:/opt/oracle/product/19c/ogg
+                EOF
 
               - |
                 # Install SQLDeveloper
