@@ -1,5 +1,5 @@
 #################
-# Author:      Des Jones (des@bitboffins.io)
+# Author:      Des Jones
 # Project:     DC automation
 # Date:        Fri 14 Oct 10:19:09 BST 2022
 # Version:     1.01
@@ -45,7 +45,7 @@ Parameters:
     MinLength: '1'
     MaxLength: '8'
     AllowedPattern: '[A-Z][A-Z0-9]*'
-    ConstraintDescription: Upper case alphanumeric characters.
+    ConstraintDescription: upper case alphanumeric characters.
   KeyPairName:
     Type: 'AWS::EC2::KeyPair::KeyName'
     Description: The name of an existing Amazon EC2 key pair in the region where the project is created, which you can use to SSH into the new Amazon EC2 Linux instances.
@@ -86,10 +86,10 @@ Parameters:
     MaxValue: '3'
     ConstraintDescription: must be between 1 and 5 EC2 instances.
   DataDiskSize:
-    Default: '24'
+    Default: '18'
     Description: Disk volume in gigabytes
     Type: Number
-    MinValue: '24'
+    MinValue: '18'
     MaxValue: '3335'
     ConstraintDescription: must be between 12 and 3335.
   AllowPublicSSH:
@@ -250,10 +250,15 @@ Resources:
         BlockDeviceMappings:
           - DeviceName: "/dev/sda1"
             Ebs:
-              VolumeSize: 16
+              VolumeSize: 24
               VolumeType: gp3
               Encrypted: true
           - DeviceName: "/dev/xvdb"
+            Ebs:
+              VolumeSize: !Ref DataDiskSize
+              VolumeType: gp3
+              Encrypted: true
+          - DeviceName: "/dev/xvdc"
             Ebs:
               VolumeSize: !Ref DataDiskSize
               VolumeType: gp3
@@ -335,7 +340,7 @@ Resources:
               - |
                 # Register DNS name
                 yum install -y python3-pip
-                pip3 install awscli 
+                pip3 install awscli
                 ln -s /usr/local/bin/aws /usr/bin/aws
                 IPADDR=`ip route get 8.8.8.8 | awk '{ for (nn=1;nn<=NF;nn++) if ($nn~"src") print $(nn+1) }'`
                 FQDN_HOSTNAME=`hostname --fqdn`
@@ -349,8 +354,7 @@ Resources:
                 mount /opt/oracle/oradata/
 
               - |
-                # Install Oracle 19c using RPMs
-                # https://www.server-world.info/en/note?os=CentOS_8&p=oracle19c&f=6
+                # Install Oracle using RPMs
                 yum install -y https://s3.us-east-2.amazonaws.com/s3repo.dc1.localdomain.net/oracle/19c/oracle-database-preinstall-19c-1.0-2.el8.x86_64.rpm
                 chown -R oracle:oinstall /opt/oracle
                 yum install -y https://s3.us-east-2.amazonaws.com/s3repo.dc1.localdomain.net/oracle/19c/oracle-database-ee-19c-1.0-1.x86_64.rpm
@@ -392,11 +396,78 @@ Resources:
 
               - |
                 # Install GoldenGate
-                curl -o gg19.1-oracle-linux64.zip https://s3.us-east-2.amazonaws.com/s3repo.dc1.localdomain.net/goldengate/gg19.1-oracle-linux64.zip
+                curl -o /root/gg19.1-oracle-linux64.zip https://s3.us-east-2.amazonaws.com/s3repo.dc1.localdomain.net/goldengate/gg19.1-oracle-linux64.zip
 
               - |
-                # Free up disk space
-                yum clean all
+                # Install SQLDeveloper
+                yum install -y java-11-openjdk java-11-openjdk-devel
+                curl -o /root/sqldeveloper-22.2.1.234.1810-no-jre.zip https://s3.us-east-2.amazonaws.com/s3repo.dc1.localdomain.net/oracle/sqldeveloper/sqldeveloper-22.2.1.234.1810-no-jre.zip
+                unzip /root/sqldeveloper-22.2.1.234.1810-no-jre.zip -d /home/oracle/
+                chown -R oracle: /home/oracle/sqldeveloper
+
+              - |
+                # Install DB2 dependency RPMs
+                yum install -y patch make perl perl-Sys-Syslog python2 m4 ksh mksh psmisc gcc gcc-c++ cpp \
+                  glibc glibc.i686 libstdc++ libstdc++.i686 pam pam.i686 libaio kernel-devel kernel-headers \
+                  sg3_utils sg3_utils-libs
+              - |
+                # Mount DB2 data disk
+                mkfs.xfs /dev/nvme2n1
+                mkdir -p /home/db2inst1
+                echo '/dev/nvme2n1       /home/db2inst1       xfs     defaults        0       0' >> /etc/fstab
+                mount /home/db2inst1
+
+              - |
+                # Install DB2 with password MySecret
+                curl -o /root/v11.5.7_linuxx64_server_dec.tar.gz https://s3.us-east-2.amazonaws.com/s3repo.dc1.localdomain.net/db2/v11.5.7_linuxx64_server_dec.tar.gz
+                tar xvzf /root/v11.5.7_linuxx64_server_dec.tar.gz -C /root/
+                rm -rf /root/v11.5.7_linuxx64_server_dec.tar.gz
+                cat << 'EOF' >> /root/db2server.rsp
+                *-----------------------------------------------------
+                *  Product Installation
+                LIC_AGREEMENT       = ACCEPT
+                PROD       = DB2_SERVER_EDITION
+                FILE       = /opt/ibm/db2/V11.5
+                INSTALL_TYPE       = TYPICAL
+                *-----------------------------------------------
+                *  Das properties
+                *-----------------------------------------------
+                DAS_CONTACT_LIST       = LOCAL
+                * ----------------------------------------------
+                *  Instance properties
+                * ----------------------------------------------
+                INSTANCE       = inst1
+                inst1.TYPE       = ese
+                *  Instance-owning user
+                inst1.NAME       = db2inst1
+                inst1.GROUP_NAME       = db2iadm1
+                inst1.HOME_DIRECTORY       = /home/db2inst1
+                inst1.PASSWORD       = 352344135633169640036366254184691692764746514430675844528145077242804631510155032653454113485021235412125516435300516855254404204936738295761451371169610565656630273294069914624134443193155691503137740561068336335270457172313503554940104481447562370326854667288442416444560324370588558513212128440168342355272782214152364962040330454641403425181452639091251458442720761854707451342686573247767121195447282073425958496366335595823223116485135935584858042088585320385837108203507416466632733739995355329425498014948216213396415086324722510459426292489354403308646369533151494644285935014624494437521938623222284652451352450146472435922189245592740157382430656468171962477372364422926651491433835036915137662395289148830896824643661195014970883213424625627970102937894457
+                ENCRYPTED       = inst1.PASSWORD
+                inst1.AUTOSTART       = YES
+                inst1.SVCENAME       = db2c_db2inst1
+                inst1.PORT_NUMBER       = 25010
+                inst1.FCM_PORT_NUMBER       = 20016
+                inst1.MAX_LOGICAL_NODES       = 6
+                inst1.CONFIGURE_TEXT_SEARCH       = NO
+                *  Fenced user
+                inst1.FENCED_USERNAME       = db2fenc1
+                inst1.FENCED_GROUP_NAME       = db2fadm1
+                inst1.FENCED_HOME_DIRECTORY       = /home/db2fenc1
+                inst1.FENCED_PASSWORD       = 666339230240575357342357869437631532114123375728181541386447572828159224271124634443643433031346172518263895612346086251537452436247518836311402244488182653652240031461953746644783764202439942141153041802913034664395553800095197808370416163146539895333346217543355655077241413162788105612842726857864312645439720794938685331155628274152605319841532375422021408711631723463322793814182515713071343396524974621653844143362247138123450617345559317192403699631944642169112156463326454395362723238453284243259920215257375883035696383443554139058868506642446005625294080131253906921620538224334357648362345423595344300044435229829147597212557643264813533971906401376444749210249961729743481248130532071662861664291634951625151378340545781143627052452147386059899430452725136
+                ENCRYPTED       = inst1.FENCED_PASSWORD
+                *-----------------------------------------------
+                *  Installed Languages
+                *-----------------------------------------------
+                LANG       = EN
+                EOF
+                /root/server_dec/db2setup -r /root/db2server.rsp -c && /root/server_dec/db2setup -r /root/db2server.rsp && rm -rf /root/server_dec
+
+              - |
+                # Install DB2 JDBC
+                curl -o /root/v11.5.4_jdbc_sqlj.tar.gz https://s3.us-east-2.amazonaws.com/s3repo.dc1.localdomain.net/db2/v11.5.4_jdbc_sqlj.tar.gz
+                tar xvzf /root/v11.5.4_jdbc_sqlj.tar.gz -C /root
+                unzip /root/jdbc_sqlj/db2_db2driver_for_jdbc_sqlj.zip -d /usr/lib/java/db2jdbc && rm -rf /root/jdbc_sqlj/ /root/v11.5.4_jdbc_sqlj.tar.gz
     DependsOn:
       - InstanceProfile
   EC2AutoScalingGroup:
