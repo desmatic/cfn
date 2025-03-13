@@ -1,0 +1,387 @@
+#################
+# Author:      Des Jones
+# Project:     DC automation
+# Date:        Fri 14 Oct 10:19:09 BST 2022
+# Version:     1.01
+# Git:         https://github.com/desmatic/cfn
+#
+
+###################################################
+
+AWSTemplateFormatVersion: 2010-09-09
+Description: amzn2 bastion dc-aws-1.01
+
+Parameters:
+  DSAEC2ServerSecurityGroupID:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Administrative security group to add access from.
+  BastionEC2ServerSecurityGroupID:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Administrative security group to add access from.
+  PowerOff:
+    Description: 'PowerOff all instances using cron expression, for example: 0 19 * * * (or never)'
+    Type: String
+    Default: '0 19 * * *'
+  CreatedBy:
+    Default: desjones
+    Description: Resource name for tagging resources
+    Type: String
+    MinLength: '1'
+    MaxLength: '64'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9-]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  OwnerName:
+    Default: devops
+    Description: Resource owners name for tagging resources
+    Type: String
+    MinLength: '1'
+    MaxLength: '64'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9-]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  KeyPairName:
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    Description: The name of an existing Amazon EC2 key pair in the region where the project is created, which you can use to SSH into the new Amazon EC2 Linux instances.
+    Default: devops
+  PortService:
+    Default: 1521
+    Description: Service port number for requests
+    Type: Number
+    MinValue: 1
+    MaxValue: 65535
+    ConstraintDescription: must be between 1 and 65535.
+  ServiceNetwork:
+    Description: The IP address range that can be used to access the service
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 10.0.0.0/8
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+  LatestAmiId:
+    Type: String
+    AllowedValues:
+      - ami-092b43193629811af
+    Default: ami-092b43193629811af
+  EC2InstanceType:
+    Type: String
+    Description: The type of Amazon EC2 Linux instances that will be launched for this project.
+    AllowedValues:
+      - t3.small
+      - t3.medium
+      - t3.large
+    Default: t3.small
+  EC2ServerCapacity:
+    Default: '0'
+    Description: The initial number of EC2Server instances
+    Type: Number
+    MinValue: '0'
+    MaxValue: '8'
+    ConstraintDescription: must be between 1 and 5 EC2 instances.
+  DiskSize:
+    Default: '16'
+    Description: Disk volume in gigabytes
+    Type: Number
+    MinValue: '16'
+    MaxValue: '3335'
+    ConstraintDescription: must be between 12 and 3335.
+  AllowPublicSSH:
+    Description: Allow ssh access on port 2222 from internet.
+    Type: String
+    AllowedValues:
+      - yes
+      - no
+    Default: yes
+  HostedZoneID:
+    Description: DNS Hosted Zone ID
+    Type: 'AWS::Route53::HostedZone::Id'
+  Subnets:
+    Type: 'List<AWS::EC2::Subnet::Id>'
+    Description: The list of SubnetIds in your Virtual Private Cloud (VPC)
+    ConstraintDescription: >-
+      must be a list of at least two existing subnets associated with at least
+      two different availability zones. They should be residing in the selected
+      Virtual Private Cloud.
+  VpcId:
+    Type: 'AWS::EC2::VPC::Id'
+    Description: The ID of the Amazon Virtual Private Cloud (VPC) to use for Amazon EC2 instances.
+
+Conditions:
+  HasPowerOff:
+    !Not [!Equals [!Ref PowerOff, never]]
+  HasPublicSSH:
+    !Equals [!Ref AllowPublicSSH, yes]
+
+Resources:
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+          Action:
+          - sts:AssumeRole
+  InstancePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+        - Effect: Allow
+          Action:
+          - route53:ChangeResourceRecordSets
+          - sns:Publish
+          Resource:
+          - "*"
+        - Effect: Allow
+          Action:
+          - iam:PassRole
+          Resource: "*"
+      Roles:
+      - Ref: InstanceRole
+      PolicyName: !Ref AWS::StackName
+    DependsOn: InstanceRole
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+      - Ref: InstanceRole
+    DependsOn: InstancePolicy
+  EC2ServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable service port and SSH access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.0.0.0/8
+        - IpProtocol: tcp
+          FromPort: !Ref PortService
+          ToPort: !Ref PortService
+          CidrIp: !Ref ServiceNetwork
+      Tags:
+        - Key: Name
+          Value: !Join
+          - '-'
+          - - !Ref AWS::StackName
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: service
+          Value: sg
+      VpcId: !Ref VpcId
+  EC2ServerSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: -1
+      FromPort: 0
+      ToPort: 65535
+      SourceSecurityGroupId:
+        Fn::GetAtt:
+        - EC2ServerSecurityGroup
+        - GroupId
+      GroupId:
+        Fn::GetAtt:
+        - EC2ServerSecurityGroup
+        - GroupId
+  EC2ServerSecurityGroupIngressPortService:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      FromPort: !Ref PortService
+      ToPort: !Ref PortService
+      GroupId: !Ref EC2ServerSecurityGroup
+      IpProtocol: tcp
+      SourceSecurityGroupId: !Ref DSAEC2ServerSecurityGroupID
+  EC2ServerSecurityGroupIngressSSH:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: HasPublicSSH
+    Properties:
+      FromPort: 2222
+      ToPort: 2222
+      GroupId: !Ref EC2ServerSecurityGroup
+      IpProtocol: tcp
+      CidrIp: 0.0.0.0/0
+  EC2PlacementGroup:
+    Type: AWS::EC2::PlacementGroup
+    Properties:
+      Strategy: spread
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Ref AWS::StackName
+      LaunchTemplateData:
+        InstanceType: !Ref EC2InstanceType
+        KeyName: !Ref KeyPairName
+        ImageId: !Ref LatestAmiId
+        EbsOptimized: true
+        InstanceMarketOptions:
+          MarketType: spot
+          SpotOptions:
+            SpotInstanceType: one-time
+        IamInstanceProfile:
+          Arn:
+            Fn::GetAtt:
+            - InstanceProfile
+            - Arn
+        SecurityGroupIds:
+          - !Ref EC2ServerSecurityGroup
+          - !Ref DSAEC2ServerSecurityGroupID
+          - !Ref BastionEC2ServerSecurityGroupID
+        BlockDeviceMappings:
+          - DeviceName: "/dev/sda1"
+            Ebs:
+              VolumeSize: !Ref DiskSize
+              VolumeType: gp3
+              Encrypted: true
+          - DeviceName: "/dev/xvdb"
+            Ebs:
+              VolumeSize: !Ref DiskSize
+              VolumeType: gp3
+              Encrypted: true
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Join
+                - '-'
+                - - !Ref AWS::StackName
+              - Key: base-stack-name
+                Value: !Ref AWS::StackName
+              - Key: base-stack-id
+                Value: !Ref AWS::StackId
+              - Key: createdby
+                Value: !Ref CreatedBy
+              - Key: owner
+                Value: !Ref OwnerName
+              - Key: service
+                Value: jumpbox
+              - Key: node-type
+                Value: mayfly
+              - Key: node-role
+                Value: !Ref AWS::StackName
+              - Key: ddns
+                Value: !Ref AWS::StackName
+              - Key: round-robin
+                Value: true
+          - ResourceType: volume
+            Tags:
+              - Key: Name
+                Value: !Join
+                - '-'
+                - - !Ref AWS::StackName
+              - Key: base-stack-name
+                Value: !Ref AWS::StackName
+              - Key: base-stack-id
+                Value: !Ref AWS::StackId
+              - Key: createdby
+                Value: !Ref CreatedBy
+              - Key: owner
+                Value: !Ref OwnerName
+              - Key: service
+                Value: jumpbox
+              - Key: node-type
+                Value: mayfly
+              - Key: node-role
+                Value: !Ref AWS::StackName
+        UserData: !Base64
+          'Fn::Join':
+            - ''
+            - - |
+                #!/bin/bash -xe
+              - |
+              - AWS_REGION=
+              - !Ref 'AWS::Region'
+              - |+
+
+              - AWS_STACK_NAME=
+              - !Ref 'AWS::StackName'
+              - |+
+
+              - HOSTED_ZONE_ID=
+              - !Ref 'HostedZoneID'
+              - |+
+
+              - |
+                # Restart ssh on port 2222
+                yum install -y policycoreutils-python-utils
+                semanage port -a -t ssh_port_t -p tcp 2222
+                sed -i 's/#Port 22/Port 22\nPort 2222/' /etc/ssh/sshd_config
+                systemctl restart sshd
+
+              - |
+                # Register DNS name
+                yum install -y python3-pip
+                pip3 install awscli --upgrade
+                ln -s /usr/local/bin/aws /usr/bin/aws
+                IPADDR=`ip route get 8.8.8.8 | awk '{ for (nn=1;nn<=NF;nn++) if ($nn~"src") print $(nn+1) }'`
+                FQDN_HOSTNAME=`hostname --fqdn`
+                /usr/local/bin/aws route53 change-resource-record-sets --hosted-zone-id ${HOSTED_ZONE_ID} --change-batch "{ \"Comment\": \"ORACLEDB A record\", \"Changes\": [{ \"Action\": \"CREATE\", \"ResourceRecordSet\": { \"Name\": \"${FQDN_HOSTNAME}\", \"Type\": \"A\", \"TTL\": 120, \"ResourceRecords\": [{ \"Value\": \"${IPADDR}\"}] }}] }" || echo "record already exists"
+
+              - |
+                # Mount oracle data disk
+                mkfs.xfs /dev/nvme1n1
+                mkdir -p /opt/oracle/oradata/
+                echo '/dev/nvme1n1       /opt/oracle/oradata/       xfs     defaults        0       0' >> /etc/fstab
+                mount /opt/oracle/oradata/
+
+              - |
+                # Install db2
+
+                # free up disk space
+                yum clean all
+    DependsOn:
+      - InstanceProfile
+  EC2AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      MinSize: 0
+      MaxSize: 3
+      DesiredCapacity: !Ref EC2ServerCapacity
+      VPCZoneIdentifier:
+        - !Select [ 0, !Ref Subnets ]
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version:
+          Fn::GetAtt:
+            - LaunchTemplate
+            - LatestVersionNumber
+      PlacementGroup: !Ref EC2PlacementGroup
+      MaxInstanceLifetime: 604800
+      TerminationPolicies:
+        - OldestLaunchConfiguration
+        - OldestLaunchTemplate
+        - OldestInstance
+    #CreationPolicy:
+      #ResourceSignal:
+        #Timeout: PT5M
+        #Count: !Ref EC2ServerCapacity
+    #UpdatePolicy:
+      #AutoScalingScheduledAction:
+        #IgnoreUnmodifiedGroupSizeProperties: true
+      #AutoScalingRollingUpdate:
+        #MinInstancesInService: 1
+        #WaitOnResourceSignals: true
+  EC2AutoScalingScheduledAction:
+    Type: AWS::AutoScaling::ScheduledAction
+    Condition: HasPowerOff
+    Properties:
+      AutoScalingGroupName: !Ref EC2AutoScalingGroup
+      DesiredCapacity: 0
+      Recurrence: !Ref PowerOff
+
+Outputs:
+  EC2ServerSecurityGroup:
+    Description: EC2 instances security group
+    Value: !Ref EC2ServerSecurityGroup

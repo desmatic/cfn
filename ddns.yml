@@ -1,0 +1,317 @@
+#################
+# Author:      Des Jones (des@bitboffins.io)
+# Project:     DC automation
+# Date:        Tue Mar 11 13:00:36 GMT 2025
+# Version:     1.01
+# Git:         https://github.com/desmatic/cfn
+###################################################
+
+AWSTemplateFormatVersion: 2010-09-09
+Description: Dynamic DNS for EC2 dc-aws-1.01
+
+Parameters:
+  CreatedBy:
+    Default: desjones
+    Description: Resource name for tagging resources
+    Type: String
+    MinLength: '1'
+    MaxLength: '64'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9-]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  OwnerName:
+    Default: infraops
+    Description: Resource owners name for tagging resources
+    Type: String
+    MinLength: '1'
+    MaxLength: '64'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9-]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  DataCenter:
+    Description: Datacenter name for tagging resources
+    Type: String
+    AllowedValues:
+      - dc1
+      - dc2
+      - dc3
+  HostedZoneName:
+    Description: DNS Hosted Zone Name
+    Type: String
+    AllowedValues:
+      - dc1.localdomain.net
+      - dc2.localdomain.net
+      - dc3.localdomain.net
+  HostedZoneID:
+    Description: DNS Hosted Zone ID
+    Type: AWS::Route53::HostedZone::Id
+  Subnets:
+    Type: 'List<AWS::EC2::Subnet::Id>'
+    Description: The list of Private SubnetIds in your Virtual Private Cloud (VPC)
+    ConstraintDescription: >-
+      must be a list of at least two existing subnets associated with at least
+      two different availability zones. They should be residing in the selected
+      Virtual Private Cloud and have NAT gateways for internet access.
+  VpcId:
+    Type: 'AWS::EC2::VPC::Id'
+    Description: The ID of the Amazon Virtual Private Cloud (VPC) to use for Amazon EC2 instances.
+
+Resources:
+  SecurityGroup:
+    Description: The security group for lambda
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Jumpbox security group
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+  SecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: -1
+      FromPort: 0
+      ToPort: 65535
+      SourceSecurityGroupId:
+        Fn::GetAtt:
+        - SecurityGroup
+        - GroupId
+      GroupId:
+        Fn::GetAtt:
+        - SecurityGroup
+        - GroupId
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+  LambdaPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+        - Effect: Allow
+          Action:
+          - ec2:*
+          - autoscaling:Describe*
+          - route53:*
+          - logs:CreateLogGroup
+          - logs:CreateLogStream
+          - logs:PutLogEvents
+          Resource:
+          - "*"
+        - Effect: Allow
+          Action:
+          - iam:PassRole
+          Resource:
+          - "*"
+      Roles:
+        - Ref: LambdaExecutionRole
+      PolicyName: !Ref AWS::StackName
+    DependsOn: LambdaExecutionRole
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: function that adds and removes DNS entries
+      Code:
+        ZipFile: !Join
+          - ''
+          - - |
+              import json
+              import boto3
+              import re
+              import uuid
+              import time
+              import random
+              import socket
+              import http.client
+              from datetime import datetime
+
+              print('DDNS: loading function ' + datetime.now().time().isoformat())
+              route53 = boto3.client('route53')
+              ec2 = boto3.resource('ec2')
+              compute = boto3.client('ec2')
+
+            - |
+            - 'HOSTED_ZONENAME="'
+            - !Ref HostedZoneName
+            - '"'
+            - |+
+
+            - |
+            - 'HOSTED_ZONEID="'
+            - !Ref HostedZoneID
+            - '"'
+            - |+
+
+            - |
+            - 'VPCID="'
+            - !Ref VpcId
+            - '"'
+            - |+
+
+            - |
+              def change_resource_record(action, zone_id, name, type, value):
+                  print('DDNS: %s resource record for %s %s %s' % (action, name, type, value))
+                  route53.change_resource_record_sets(
+                      HostedZoneId=zone_id,
+                      ChangeBatch={
+                          "Comment": "Updated by Lambda DDNS",
+                          "Changes": [
+                              {
+                                  "Action": action,
+                                  "ResourceRecordSet": {
+                                      "Name": name,
+                                      "Type": type,
+                                      "TTL": 60,
+                                      "ResourceRecords": [{ "Value": value }]
+                                  }
+                              },
+                          ]
+                      }
+                  )
+
+              def lambda_handler(event, context):
+                  # get the instance id, state, region
+                  instance_id = event['detail']['instance-id']
+                  instance_name = instance_id + '.' + HOSTED_ZONENAME
+                  state = event['detail']['state']
+                  region = event['region']
+                  print('DDNS: %s now in state %s in %s' % (instance_id, state, region))
+                  if state == 'running':
+                      print('DDNS: waiting 60 seconds for %s to come online' % (instance_name))
+                      time.sleep(60)
+                      try:
+                          print('DDNS: describing instance %s' % (instance_id))
+                          instance = compute.describe_instances(InstanceIds=[instance_id])
+                          ip = instance['Reservations'][0]['Instances'][0]['PrivateIpAddress']
+                          name = instance['Reservations'][0]['Instances'][0]['PrivateDnsName'].split('.')[0] + '.' + HOSTED_ZONENAME
+                          round_robin = None
+                          add_round_robin = False
+                          if instance['Reservations'][0]['Instances'][0]['VpcId'] == VPCID:
+                              for tag in instance['Reservations'][0]['Instances'][0]['Tags']:
+                                  if tag['Key'] == 'ddns':
+                                      name = tag['Value'] + '-' + instance_name
+                                      round_robin = tag['Value'] + '.' + HOSTED_ZONENAME
+                                  if tag['Key'] == 'round-robin':
+                                      if tag['Value'].lower() == "true":
+                                          add_round_robin = True
+                              print('DDNS: adding host %s %s to %s' % (name, ip, VPCID))
+                              change_resource_record('UPSERT', HOSTED_ZONEID, name, 'A', ip)
+                              change_resource_record('UPSERT', HOSTED_ZONEID, instance_name, 'CNAME', name)
+                              if add_round_robin is True:
+                                  change_resource_record('UPSERT', HOSTED_ZONEID, round_robin, 'A', ip)
+                          else:
+                              print('DDNS: instance %s in another VPC %s' % (instance_id, instance['Reservations'][0]['Instances'][0]['VpcId']))
+                      except BaseException as e:
+                          print('DDNS: error updating instance details', e)
+                  else:
+                      print('DDNS: removing DNS entries for %s' % (instance_name))
+                      try:
+                          name = socket.gethostbyname_ex(instance_name)[0]
+                          ip = socket.gethostbyname(instance_name)
+                          print('DDNS: deleting host %s %s to %s' % (name, ip, VPCID))
+                          try:
+                              change_resource_record('DELETE', HOSTED_ZONEID, name, 'A', ip)
+                          except: pass
+                          try:
+                              change_resource_record('DELETE', HOSTED_ZONEID, name.replace("-%s" % (instance_id), ""), 'A', ip)
+                          except: pass
+                          try:
+                              change_resource_record('DELETE', HOSTED_ZONEID, instance_name, 'CNAME', name)
+                          except: pass
+                          try:
+                              name = name.split('.')[0]
+                              print('DDNS: deleting host %s from sensu.%s' % (name, HOSTED_ZONENAME))
+                              conn = http.client.HTTPConnection("sensu.%s" % (HOSTED_ZONENAME), 4567, timeout=20)
+                              conn.request("DELETE", "/clients/%s" % (name))
+                              response = conn.getresponse()
+                              print('DDNS: response from sensu server ', response.status, response.reason)
+                          except Exception as e:
+                              print('DDNS: error deleting host %s from sensu' % (name), e)
+                      except BaseException as e:
+                          print('DDNS: error deleting instance details', e)
+            - |+
+      Handler: index.lambda_handler
+      MemorySize: 128
+      Timeout: 120
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref SecurityGroup
+        SubnetIds: !Ref Subnets
+      Role:
+        Fn::GetAtt:
+          - LambdaExecutionRole
+          - Arn
+      Runtime: python3.13
+      Tags:
+        - Key: Name
+          Value: !Join
+          - '-'
+          - - !Ref AWS::StackName
+        - Key: base-stack-name
+          Value: !Ref AWS::StackName
+        - Key: base-stack-id
+          Value: !Ref AWS::StackId
+        - Key: createdby
+          Value: !Ref CreatedBy
+        - Key: owner
+          Value: !Ref OwnerName
+        - Key: datacenter
+          Value: !Ref DataCenter
+        - Key: service
+          Value: vpc
+        - Key: service-type
+          Value: ddns
+  EventRuleEC2State:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Create DNS entry for EC2 instances
+      EventPattern:
+        source:
+          - aws.ec2
+        detail-type:
+          - EC2 Instance State-change Notification
+        detail:
+          state:
+            - running
+            - terminated
+      State: ENABLED
+      Targets:
+        -
+          Arn:
+            Fn::GetAtt:
+              - LambdaFunction
+              - Arn
+          Id: EventRuleEC2State
+  PermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName:
+        Ref: LambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn:
+        Fn::GetAtt:
+          - EventRuleEC2State
+          - Arn
