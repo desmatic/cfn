@@ -445,7 +445,7 @@ Resources:
                         if egrep -qa "${HOSTIP}" /etc/cloud/templates/hosts.redhat.tmpl; then
                             sed -i "s/^[ ]*${HOSTIP}.*$/${HOSTS}/" /etc/cloud/templates/hosts.redhat.tmpl
                         else
-                            echo -e "# al-set-hostname\n${HOSTS}" >> /etc/cloud/templates/hosts.redhat.tmpl
+                            echo -e "# local-set-hostname\n${HOSTS}" >> /etc/cloud/templates/hosts.redhat.tmpl
                         fi
                     fi
 
