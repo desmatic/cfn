@@ -30,16 +30,14 @@ Parameters:
     Description: Datacenter name for tagging resources
     Type: String
     AllowedValues:
-      - dc1
-      - dc2
-      - dc3
+      - eu1aws
+      - eu2aws
   HostedZoneName:
     Description: DNS Hosted Zone Name
     Type: String
     AllowedValues:
-      - dc1.localdomain.net
-      - dc2.localdomain.net
-      - dc3.localdomain.net
+      - eu1aws.localdomain.net
+      - eu2aws.localdomain.net
   HostedZoneID:
     Description: DNS Hosted Zone ID
     Type: AWS::Route53::HostedZone::Id
